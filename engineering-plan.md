@@ -43,18 +43,22 @@ huggingface-cli download ibm-esa-geospatial/ImpactMesh-Fire \
 | Property | Value |
 |----------|-------|
 | Source | HuggingFace `ibm-granite/granite-geospatial-uki` |
-| Access method | TerraTorch `BACKBONE_REGISTRY.build()` (auto-downloads) |
+| Checkpoint file | `granite_geospatial_uki.pt` |
+| Access method | `huggingface_hub.hf_hub_download()` → load with `PrithviViT` from terratorch |
+| Architecture | PrithviViT (ViT-Base MAE, 12 layers, 768 dim, 8 in_chans, 3 pretrain frames) |
+| Registry note | **Not registered** in terratorch 1.2.7 BACKBONE_REGISTRY; must be loaded manually |
 | Size | ~400 MB |
 | Cached at | `~/.cache/huggingface/` |
 
-### 1.3 Data discovery (TBD during code generation)
+### 1.3 Data format (confirmed)
 
-Before writing the data loading logic, inspect the first extracted sample to confirm:
-- File format (GeoTIFF vs Zarr)
-- Band ordering in S2L2A files (is it B02, B03, B04, B8A, B11, B12?)
-- S1RTC value range (linear power or dB?)
-- Mask encoding (binary 0/1? multi-class? what is the nodata value?)
-- Spatial dimensions (expected: 224×224 at 10m)
+Inspection of the extracted dataset confirmed:
+- **S2L2A format:** Zarr zip archives, shape `(4, 12, 256, 256)` int16. 4 timestamps, 12 bands (B01–B12). Band indices used: [1, 2, 3, 8, 10, 11] → B02, B03, B04, B8A, B11, B12.
+- **S1RTC format:** Zarr zip archives, shape `(4, 2, 256, 256)` float16. Values are already in dB scale (typical range: -30 to 0). Some tiles contain NaN (missing SAR coverage).
+- **MASK format:** GeoTIFF, shape `(1, 256, 256)` int8, binary 0/1.
+- **Timestamps:** pre-month(0), pre-event(1), event(2), post-event(3). We use index 2 (event).
+- **Spatial dimensions:** 256×256 at 10 m resolution (resized to 224×224 by the model's interpolate_pos_encoding).
+- **Data completeness:** Not all split entries have files on disk (partial download). The dataset loader filters to samples with all three modalities present.
 
 ## 2. Processing Strategy
 
@@ -81,26 +85,37 @@ No Dask cluster is needed — this is a single-GPU PyTorch training workflow. Th
 
 ```mermaid
 flowchart LR
-    A[GeoTIFF on disk] --> B[PyTorch Dataset.__getitem__]
-    B --> C[Normalise S2: /10000, clip 0-1]
-    B --> D[Normalise S1: 10log10, clip -35,10, scale 0-1]
+    A[Zarr.zip / GeoTIFF on disk] --> B[PyTorch Dataset.__getitem__]
+    B --> C[S2: int16 /10000, clip 0-1]
+    B --> D[S1: float16 dB, clip -35 to 10, scale 0-1, NaN→0]
     C --> E[Concatenate 8 bands]
     D --> E
-    E --> F[DataLoader batch=16]
+    E --> F[DataLoader batch=16, persistent_workers=True]
     F --> G[GPU]
 ```
 
-**Per-sample memory:** 8 bands × 224 × 224 × 4 bytes (float32) = ~1.6 MB
-**Per-batch memory:** 16 × 1.6 MB = ~25 MB (negligible)
+**Normalisation details:**
+- **S2 (bands 0–5):** `clip(arr.float32 / 10000, 0, 1)`. Source dtype: int16.
+- **S1 (bands 6–7):** Data is already dB (float16). Auto-detect: if `nanmedian > 0 and < 1` → linear power, apply `10*log10`; otherwise treat as dB. Clip to [-35, 10], scale to [0, 1] via `(arr + 35) / 45`. Replace NaN with 0.0.
+- **Data availability:** `_filter_available()` at Dataset init checks S2L2A, S1RTC, and MASK files exist for each sample.
+
+**Per-sample memory:** 8 bands × 256 × 256 × 4 bytes (float32) = ~2.1 MB
+**Per-batch memory:** 16 × 2.1 MB = ~33 MB (negligible)
 
 ### 2.4 Model architecture
 
-```
-granite-geospatial-uki backbone (frozen/unfrozen)
-    Input: (B, 8, 1, 224, 224)  → ViT encoder
-    Output: (B, L, 768) token sequence
+The granite-geospatial-uki model uses the `PrithviViT` architecture from terratorch. It is **not registered** in the terratorch 1.2.7 backbone registry, so it is loaded directly from the HuggingFace checkpoint.
 
-Reshape: remove CLS tokens → (B, 768, 14, 14) spatial features
+```
+PrithviViT backbone (loaded from ibm-granite/granite-geospatial-uki .pt checkpoint)
+    Config: img_size=224, num_frames=3, patch_size=[1,16,16], in_chans=8,
+            embed_dim=768, depth=12, num_heads=12, mlp_ratio=4
+    Checkpoint keys: encoder only (decoder/mask_token keys filtered out)
+    Forward: input (B, 8, 1, 224, 224), mask_ratio=0.0
+    Output: (B, 1+196, 768) — cls token + 14×14 spatial tokens
+    pos_embed interpolation handles num_frames=1 at inference despite num_frames=3 at pretrain
+
+Reshape: drop CLS token → (B, 768, 14, 14) spatial features
 
 Decoder:
     Conv2d(768→256) + BN + ReLU + Upsample ×2   → (B, 256, 28, 28)
@@ -110,6 +125,8 @@ Decoder:
 
 Bilinear interpolate to input resolution if needed
 ```
+
+**Total params:** ~88.8M. **Trainable (Phase 1):** ~2.1M (decoder only).
 
 ### 2.5 Training configuration
 
@@ -145,13 +162,15 @@ Metrics computed on the full test set and separately on samples matching `EMSR40
 
 ## 4. Risk Analysis
 
-| Risk | Likelihood | Impact | Mitigation |
-|------|-----------|--------|-----------|
-| No Australian events in dataset | Low (EMSR408 confirmed in test split) | Cannot evaluate AU performance | Fall back to global metrics; source DEA burnt area for validation |
-| S1 normalisation mismatch | Medium | Poor SAR feature learning | Inspect first sample; compare value ranges to granite-uki docs |
-| OOM on Phase 2 | Medium | Training crashes | Reduce batch to 4; enable gradient checkpointing |
-| Backbone output format unexpected | Medium | Model won't train | Inspect backbone output shape on dummy input before training |
-| Band ordering wrong | Medium | Garbage predictions | Validate against granite-uki model card band order |
+| Risk | Likelihood | Impact | Mitigation | Status |
+|------|-----------|--------|-----------|--------|
+| No Australian events in dataset | Low | Cannot evaluate AU performance | Fall back to global metrics | ✅ Resolved — EMSR408 confirmed |
+| S1 normalisation mismatch | Medium | Poor SAR feature learning | Inspect first sample; compare value ranges | ✅ Resolved — data is float16 dB, no log needed |
+| S1 NaN values (missing SAR coverage) | Confirmed | NaN loss → training failure | Replace NaN with 0.0 after normalisation | ✅ Resolved |
+| Incomplete data download | Confirmed | FileNotFoundError during training | `_filter_available()` skips missing samples | ✅ Resolved |
+| granite_geospatial_uki not in terratorch registry | Confirmed | Model instantiation fails | Load PrithviViT directly + HF checkpoint | ✅ Resolved |
+| OOM on Phase 2 | Medium | Training crashes | Reduce batch to 4; enable gradient checkpointing | Open |
+| Band ordering wrong | Medium | Garbage predictions | Validated against granite-uki model card band order | ✅ Resolved |
 
 ## 5. Milestones (maps to science plan)
 

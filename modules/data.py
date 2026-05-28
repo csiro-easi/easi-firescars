@@ -30,11 +30,21 @@ def normalize_s2(arr: np.ndarray) -> np.ndarray:
 
 
 def normalize_s1(arr: np.ndarray) -> np.ndarray:
-    """Sentinel-1 RTC linear power → dB, clip [-35, 10], scale to [0, 1]."""
+    """Sentinel-1 RTC → dB, clip [-35, 10], scale to [0, 1].
+
+    Auto-detects whether input is linear power (>0 typical) or already dB (negative typical).
+    NaN values are replaced with 0 (mid-range after scaling).
+    """
     arr = arr.astype(np.float32)
-    arr = np.where(arr > 0, 10.0 * np.log10(arr + 1e-10), -35.0)
+    med = np.nanmedian(arr)
+    if not np.isnan(med) and med > 0 and med < 1.0:
+        # Linear power → convert to dB
+        arr = np.where(arr > 0, 10.0 * np.log10(arr + 1e-10), -35.0)
+    # Already in dB (or just converted); clip and scale
     arr = np.clip(arr, -35.0, 10.0)
-    return (arr + 35.0) / 45.0
+    arr = (arr + 35.0) / 45.0
+    np.nan_to_num(arr, copy=False, nan=0.0)
+    return arr
 
 
 def get_split_samples(data_root: Path, split: str) -> List[str]:
@@ -59,6 +69,19 @@ class ImpactMeshFireDataset(Dataset):
             self.samples = samples
         else:
             self.samples = get_split_samples(self.data_root, split)
+        self.samples = self._filter_available(self.samples)
+
+    def _filter_available(self, samples: List[str]) -> List[str]:
+        """Keep only samples whose S2, S1, and MASK files all exist on disk."""
+        available = []
+        for s in samples:
+            if all([
+                (self.data_root / "data" / "S2L2A" / f"{s}_S2L2A.zarr.zip").exists(),
+                (self.data_root / "data" / "S1RTC" / f"{s}_S1RTC.zarr.zip").exists(),
+                (self.data_root / "data" / "MASK" / f"{s}_annotation_wildfire.tif").exists(),
+            ]):
+                available.append(s)
+        return available
 
     def __len__(self) -> int:
         return len(self.samples)

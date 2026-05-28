@@ -43,7 +43,9 @@ hf download ibm-esa-geospatial/ImpactMesh-Fire --include "train/S2L2A.tar" "trai
 
 ### Sentinel-1 normalisation convention
 
-The granite-geospatial-uki model was pre-trained with Sentinel-1 backscatter normalised as 10×log₁₀(σ₀), clipped to the range [-35, 10] dB. The ImpactMesh-Fire dataset provides Sentinel-1 as radiometrically terrain-corrected (RTC) backscatter in linear power units. The same dB conversion and clipping must be applied to align with the model's pre-training expectations.
+The granite-geospatial-uki model was pre-trained with Sentinel-1 backscatter normalised as 10×log₁₀(σ₀), clipped to the range [-35, 10] dB. The ImpactMesh-Fire dataset provides Sentinel-1 RTC data as **float16 values already in dB scale** (typical range: -30 to 0 dB). No log conversion is needed — only clipping to [-35, 10] and linear rescaling to [0, 1].
+
+**NaN handling:** Some S1 tiles contain NaN values (missing SAR coverage, e.g. where orbit geometry provides no data). These are replaced with 0.0 after normalisation (equivalent to -35 dB, i.e. minimal backscatter). Approximately 15% of samples have partial NaN coverage in the S1 bands.
 
 ### Sentinel-2 normalisation convention
 
@@ -58,9 +60,12 @@ Obtain the dataset from HuggingFace and extract all modalities (Sentinel-1 RTC, 
 ### 2. Prepare 8-band input chips
 
 For each sample, construct an 8-band image chip by:
-- Taking the 6 relevant Sentinel-2 bands (Blue, Green, Red, Narrow NIR, SWIR1, SWIR2) and normalising to [0, 1] reflectance
-- Taking the 2 Sentinel-1 bands (VV, VH), converting from linear power to dB (10×log₁₀), clipping to [-35, 10], and rescaling to [0, 1]
-- Concatenating into a single 8-band chip at 224×224 pixels
+- Taking the 6 relevant Sentinel-2 bands (Blue, Green, Red, Narrow NIR, SWIR1, SWIR2) from int16 surface reflectance and normalising to [0, 1] by dividing by 10,000 and clipping
+- Taking the 2 Sentinel-1 bands (VV, VH) — already stored in dB (float16) — clipping to [-35, 10] and rescaling to [0, 1]
+- Replacing any NaN values in S1 bands with 0.0 (represents -35 dB / no signal)
+- Concatenating into a single 8-band chip at 256×256 pixels (original tile size; centre-cropped or resized to 224×224 for the model)
+
+**Data availability filtering:** Not all samples in the split files have complete data on disk (partial downloads or missing modalities). The dataset loader checks for existence of all three files (S2L2A, S1RTC, MASK) at initialisation and silently excludes incomplete samples.
 
 ### 3. Split data into training, validation, and test sets
 
