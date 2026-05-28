@@ -12,10 +12,11 @@ pip install terratorch impactmesh huggingface_hub rasterio tensorboard
 echo "=== Downloading ImpactMesh-Fire (S1, S2, MASK only — ~30 GB) ==="
 hf download ibm-esa-geospatial/ImpactMesh-Fire \
   --repo-type dataset \
-  --include "train/S2L2A.tar" "train/S1RTC.tar" "train/MASK.tar" \
-            "val/S2L2A.tar" "val/S1RTC.tar" "val/MASK.tar" \
-            "test/S2L2A.tar" "test/S1RTC.tar" "test/MASK.tar" \
-            "split/*" \
+  --include "train/*.tar" \
+  --include "val/*.tar" \
+  --include "test/*.tar" \
+  --include "split/*" \
+  --exclude "*DEM*" \
   --local-dir data/ImpactMesh-Fire
 
 echo "=== Extracting ==="
