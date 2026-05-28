@@ -4,9 +4,9 @@
 
 Evaluate whether the granite-geospatial-uki foundation model — pre-trained on both optical (Sentinel-2) and SAR (Sentinel-1) imagery — can be fine-tuned to accurately map fire burn scars on the east coast of Australia.
 
-The geographic focus is eastern Australia (New South Wales, Victoria, and Queensland), where eucalypt forests and coastal vegetation experience intense bushfire events. The temporal scope covers fire events in the ImpactMesh-Fire dataset (primarily 2019–2024), with particular attention to the 2019–2020 Black Summer fires for validation.
+The geographic focus is eastern Australia (New South Wales, Victoria, and Queensland), where eucalypt forests and coastal vegetation experience intense bushfire events. The temporal scope covers fire events in the ImpactMesh-Fire dataset (primarily 2019–2024), specifically the 2019–2020 Black Summer fires (Copernicus EMS activation EMSR408).
 
-This is an exploratory evaluation of the model's transferability to Australian fire conditions. The model is trained using all 8 input bands (6 optical + 2 SAR) to leverage the cloud-penetrating capability of radar for burn scar detection under smoke and persistent cloud cover — conditions common during major Australian fire events.
+Both training and evaluation use exclusively Australian data (EMSR408 samples from ImpactMesh-Fire, covering MGRS tiles in UTM zone 56S — eastern NSW). This tests whether the foundation model's representations, learned from UK/Ireland and US imagery, transfer effectively to Australian landscapes when fine-tuned on local fire events. The model is trained using all 8 input bands (6 optical + 2 SAR) to leverage the cloud-penetrating capability of radar for burn scar detection under smoke and persistent cloud cover — conditions common during major Australian fire events.
 
 ## Input Data Sources
 
@@ -63,13 +63,13 @@ For each sample, construct an 8-band image chip by:
 - Taking the 6 relevant Sentinel-2 bands (Blue, Green, Red, Narrow NIR, SWIR1, SWIR2) from int16 surface reflectance and normalising to [0, 1] by dividing by 10,000 and clipping
 - Taking the 2 Sentinel-1 bands (VV, VH) — already stored in dB (float16) — clipping to [-35, 10] and rescaling to [0, 1]
 - Replacing any NaN values in S1 bands with 0.0 (represents -35 dB / no signal)
-- Concatenating into a single 8-band chip at 256×256 pixels (original tile size; centre-cropped or resized to 224×224 for the model)
+- Concatenating into a single 8-band chip at 256×256 pixels (original tile size; the model handles variable spatial resolution via positional embedding interpolation)
 
 **Data availability filtering:** Not all samples in the split files have complete data on disk (partial downloads or missing modalities). The dataset loader checks for existence of all three files (S2L2A, S1RTC, MASK) at initialisation and silently excludes incomplete samples.
 
 ### 3. Split data into training, validation, and test sets
 
-Use the split files provided with ImpactMesh-Fire (train/val/test). Confirm that any Australian east-coast events (particularly Black Summer fires in NSW, Victoria, and Queensland) are placed in the test set so they can serve as an independent validation of the model's performance on Australian landscapes.
+Collect all Australian samples (EMSR408) from across the ImpactMesh-Fire train/val/test splits (~2,877 samples total). Shuffle and re-split into 70% train / 15% validation / 15% test. This ensures the model is trained and evaluated exclusively on Australian Black Summer fire events. The dataset loader further filters to only samples with all three modalities (S2L2A, S1RTC, MASK) present on disk.
 
 ### 4. Fine-tune the model with the backbone initially frozen
 
@@ -79,9 +79,9 @@ Attach a convolutional decoder (upsampling network) to the frozen foundation mod
 
 Unfreeze the backbone and continue training the entire model at a lower learning rate. This allows the model to adapt its internal representations to fire-specific spectral and SAR signatures in vegetation types not seen during pre-training (Australian eucalypt forests, tropical savanna).
 
-### 6. Evaluate on the test set, with focus on Australian events
+### 6. Evaluate on the held-out Australian test set
 
-Compute segmentation accuracy metrics on the full test set and separately on the Australian east-coast subset. Compare performance between the two subsets to assess transferability.
+Compute segmentation accuracy metrics on the held-out test split (15% of all Australian samples). Since training and evaluation both use EMSR408 data, this measures in-domain performance on Black Summer fire events.
 
 ## Expected Outputs
 
@@ -91,11 +91,10 @@ A fine-tuned version of granite-geospatial-uki with an attached segmentation dec
 
 ### Evaluation metrics
 
-For the full test set and the Australian east-coast subset separately:
+For the held-out Australian test set:
 
 - **Intersection over Union (IoU)** for the burn scar class — the primary metric. Expected range: 0.55–0.75 based on published results for similar tasks.
-- **F1-score** (Dice coefficient) — expected range: 0.70–0.85
-- **Precision and recall** — to understand whether errors are dominated by false positives (over-mapping) or false negatives (under-mapping)
+- **Loss** (Dice + BCE) — to confirm generalisation without overfitting
 
 ### Prediction maps
 
@@ -115,21 +114,21 @@ Loss and IoU curves across training epochs for both phases (frozen and unfrozen 
 
 **Stop if:** Fewer than 10,000 samples extracted (incomplete download). Any modality is entirely missing (extraction error). Mask files are all zeros (wrong mask layer) or all ones (inverted mask).
 
-### Milestone 2: Australian east-coast events identified in test set
+### Milestone 2: Australian training/validation/test splits created
 
-**What you should see:** At least 2–5 fire events from eastern Australia are present in the dataset and allocated to the test split. These should include events from the 2019–2020 fire season if Copernicus EMS activations for Black Summer are in the dataset.
+**What you should see:** All EMSR408 samples collected from across the original splits, shuffled, and divided into ~2,014 train / ~431 val / ~432 test samples. After data availability filtering, the actual counts will be lower (depending on download completeness).
 
-**Visual check:** Show the geographic locations of all fire events in the dataset on a map, with Australian east-coast events highlighted. Confirm they fall within NSW, Victoria, or Queensland.
+**Visual check:** Print the number of available samples per split. Confirm all are from EMSR408 (Black Summer, eastern NSW).
 
-**Stop if:** No Australian events are present in the dataset (the model can still be trained on global data, but the east-coast evaluation objective cannot be met — consider sourcing additional Australian reference data from Digital Earth Australia burnt area products). Fewer than 50 Australian test samples (insufficient for meaningful evaluation).
+**Stop if:** Fewer than 500 available train samples after filtering (insufficient for fine-tuning — complete the data download). Zero test samples available (cannot evaluate).
 
 ### Milestone 3: Model training converges (frozen backbone phase)
 
-**What you should see:** Training loss decreases steadily over 15–20 epochs. Validation IoU improves from near-zero to above 0.45 within the first 10 epochs, indicating the decoder is successfully learning to interpret the backbone's features for burn scar mapping.
+**What you should see:** Training loss decreases steadily over 10 epochs. Validation IoU improves from near-zero to above 0.45 within the first 5 epochs, indicating the decoder is successfully learning to interpret the backbone's features for burn scar mapping.
 
 **Visual check:** Plot training loss and validation IoU curves across epochs. The curves should show clear improvement without erratic oscillation.
 
-**Stop if:** Validation IoU remains below 0.30 after 15 epochs (the backbone features may not be suitable for this task, or the data pipeline has an error — check that bands are in the correct order and normalisation matches the model's pre-training). Loss does not decrease (learning rate too low, or gradient flow is blocked).
+**Stop if:** Validation IoU remains below 0.30 after 10 epochs (the backbone features may not be suitable for this task, or the data pipeline has an error — check that bands are in the correct order and normalisation matches the model's pre-training). Loss does not decrease (learning rate too low, or gradient flow is blocked).
 
 ### Milestone 4: Model training converges (full fine-tuning phase)
 
@@ -139,15 +138,15 @@ Loss and IoU curves across training epochs for both phases (frozen and unfrozen 
 
 **Stop if:** Validation IoU decreases compared to the frozen-backbone result (learning rate too high, causing forgetting — reduce it). Training loss explodes (gradient instability — reduce learning rate or add gradient clipping).
 
-### Milestone 5: Evaluation on Australian east-coast fires
+### Milestone 5: Evaluation on held-out Australian test set
 
-**What you should see:** IoU on the Australian east-coast test subset is above 0.50. This would indicate the model generalises to Australian landscapes despite being pre-trained on UK/Ireland data and trained primarily on global (non-Australian) fire events.
+**What you should see:** IoU on the held-out Australian test split is above 0.50. Since both training and test data are Australian, this measures the model's ability to learn burn scar mapping for local landscapes rather than cross-domain transferability.
 
-**Visual check:** For 3–5 Black Summer fire events, show the Sentinel-2 RGB, Sentinel-1 VV, ground truth mask, and predicted mask in a 4-panel figure. Assess visually:
+**Visual check:** For 5 random test samples, show the Sentinel-2 RGB, Sentinel-1 VV, ground truth mask, and predicted mask in a 4-panel figure. Assess visually:
 - Does the prediction capture the overall fire extent?
 - Are the boundaries reasonable (following vegetation boundaries, ridge lines)?
 - Are there obvious false positives (non-burned areas mapped as burn)?
 
 **Deep-dive — Black Summer, South Coast NSW:** If events from the Shoalhaven or Bega Valley region are in the test set, examine these in detail. These areas experienced near-complete canopy loss in eucalypt forests — the burn signal should be strong in both optical (low NIR, high SWIR) and SAR (reduced VH backscatter from canopy loss). Show the model's prediction alongside the Copernicus EMS reference mask for this area.
 
-**Stop if:** IoU on Australian events is below 0.35 (substantially worse than global performance — suggests a domain gap that may require Australian-specific training data or a different pre-training base). The model systematically misses burns in dense eucalypt forest (possible that SAR signal differs from UK/Ireland vegetation types — consider whether additional continual pre-training on Australian scenes is needed).
+**Stop if:** IoU on the test set is below 0.35 (the model is not learning burn scar patterns from Australian data — check data pipeline, normalisation, or consider augmentation). The model systematically misses burns in dense eucalypt forest (possible that SAR signal differs from UK/Ireland vegetation types — consider whether additional continual pre-training on Australian scenes is needed).

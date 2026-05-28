@@ -57,7 +57,7 @@ Inspection of the extracted dataset confirmed:
 - **S1RTC format:** Zarr zip archives, shape `(4, 2, 256, 256)` float16. Values are already in dB scale (typical range: -30 to 0). Some tiles contain NaN (missing SAR coverage).
 - **MASK format:** GeoTIFF, shape `(1, 256, 256)` int8, binary 0/1.
 - **Timestamps:** pre-month(0), pre-event(1), event(2), post-event(3). We use index 2 (event).
-- **Spatial dimensions:** 256×256 at 10 m resolution (resized to 224×224 by the model's interpolate_pos_encoding).
+- **Spatial dimensions:** 256×256 at 10 m resolution (the model's positional embedding interpolation handles this natively despite img_size=224 in config).
 - **Data completeness:** Not all split entries have files on disk (partial download). The dataset loader filters to samples with all three modalities present.
 
 ## 2. Processing Strategy
@@ -111,17 +111,17 @@ PrithviViT backbone (loaded from ibm-granite/granite-geospatial-uki .pt checkpoi
     Config: img_size=224, num_frames=3, patch_size=[1,16,16], in_chans=8,
             embed_dim=768, depth=12, num_heads=12, mlp_ratio=4
     Checkpoint keys: encoder only (decoder/mask_token keys filtered out)
-    Forward: input (B, 8, 1, 224, 224), mask_ratio=0.0
-    Output: (B, 1+196, 768) — cls token + 14×14 spatial tokens
+    Forward: input (B, 8, 1, 256, 256), mask_ratio=0.0
+    Output: (B, 1+256, 768) — cls token + 16×16 spatial tokens
     pos_embed interpolation handles num_frames=1 at inference despite num_frames=3 at pretrain
 
-Reshape: drop CLS token → (B, 768, 14, 14) spatial features
+Reshape: drop CLS token → (B, 768, 16, 16) spatial features
 
 Decoder:
-    Conv2d(768→256) + BN + ReLU + Upsample ×2   → (B, 256, 28, 28)
-    Conv2d(256→128) + BN + ReLU + Upsample ×2   → (B, 128, 56, 56)
-    Conv2d(128→64)  + BN + ReLU + Upsample ×4   → (B, 64, 224, 224)
-    Conv2d(64→2, 1×1)                            → (B, 2, 224, 224)
+    Conv2d(768→256) + BN + ReLU + Upsample ×2   → (B, 256, 32, 32)
+    Conv2d(256→128) + BN + ReLU + Upsample ×2   → (B, 128, 64, 64)
+    Conv2d(128→64)  + BN + ReLU + Upsample ×4   → (B, 64, 256, 256)
+    Conv2d(64→2, 1×1)                            → (B, 2, 256, 256)
 
 Bilinear interpolate to input resolution if needed
 ```
@@ -132,7 +132,7 @@ Bilinear interpolate to input resolution if needed
 
 | Parameter | Phase 1 (frozen) | Phase 2 (unfrozen) |
 |-----------|-------------------|---------------------|
-| Epochs | 20 | 10 |
+| Epochs | 10 | 5 |
 | Batch size | 16 | 8 |
 | LR (decoder) | 1e-3 | 1e-4 |
 | LR (backbone) | — | 1e-5 |
@@ -146,8 +146,7 @@ Bilinear interpolate to input resolution if needed
 
 Metrics computed on the full test set and separately on samples matching `EMSR408*` (Australian Black Summer):
 - IoU (burn scar class)
-- F1 / Dice
-- Precision, Recall
+- Loss (Dice + BCE)
 
 ## 3. Resource Requirements
 
@@ -183,7 +182,7 @@ Metrics computed on the full test set and separately on samples matching `EMSR40
 **Validation:** ≥50 samples with AU-related EMSR codes in test split.
 
 ### M3: Training converges (Phase 1)
-**Technical:** Loss decreasing, val IoU > 0.45 by epoch 15.
+**Technical:** Loss decreasing, val IoU > 0.45 by epoch 10.
 **Validation:** Plot loss and IoU curves.
 
 ### M4: Training converges (Phase 2)
@@ -213,8 +212,6 @@ kiro-foundation-model/
 │   ├── test_data.py           # Normalisation correctness, band ordering
 │   ├── test_model.py          # Forward pass shape, backbone output handling
 │   └── test_train.py          # Loss computation, metric calculation
-├── configs/
-│   └── default.yaml           # Training hyperparameters (optional TerraTorch-compatible)
 ├── docs/
 │   └── venv-setup.md
 └── easi-notebooks-ddp/        # Reference code (cloned PR #32)
