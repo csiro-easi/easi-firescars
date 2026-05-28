@@ -184,13 +184,13 @@ For samples without SAR data, the Granite teacher weight is redistributed to the
 
 | Parameter | Value |
 |-----------|-------|
-| Encoder | EfficientNet-B3 (ImageNet pretrained) |
+| Encoder | EfficientNet-B3 (modified input stem) |
 | Decoder | UNet (lightweight) |
-| Input | 224×224×6 bands (optical only) |
+| Input | 224×224×8 bands (6 optical + VV, VH) |
 | Parameters | ~12M (vs 300M per teacher) |
 | Output | Single-channel probability map |
 
-The student uses only optical bands for maximum operational flexibility (no SAR dependency at inference time).
+The student uses all 8 bands (optical + SAR) to inherit the Granite teacher's cloud/smoke-penetrating capability. The first conv layer is initialised by replicating ImageNet weights for the 6 optical channels and zero-initialising the 2 SAR channels. When SAR is unavailable at inference, VV/VH are set to zero (graceful degradation).
 
 ### 5.4 Distillation Training
 

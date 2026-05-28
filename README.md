@@ -17,7 +17,7 @@ This project fine-tunes three geospatial foundation models on Australian firesca
 ### Student Model
 
 - **Architecture**: EfficientNet-B3 + UNet decoder (~12M params)
-- **Input**: 6 optical bands (no SAR dependency at inference)
+- **Input**: 6 optical + 2 SAR bands (graceful degradation when SAR unavailable)
 - **Training**: Knowledge distillation from teacher ensemble soft labels
 
 ## Repository Structure
