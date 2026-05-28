@@ -1,0 +1,45 @@
+model:
+  encoder: vit_base_patch16_224
+  decoder: upernet
+  num_classes: 1
+  input_bands: 6
+  input_size: 224
+  encoder_weights_path: null  # set to OLMo Earth checkpoint path when available
+
+data:
+  chips_path: /tmp/firescar_chips
+  metadata_path: /tmp/firescar_chips/metadata.json
+  batch_size: 16
+  num_workers: 4
+  use_dali: false
+
+training:
+  epochs: 30
+  lr: 1.0e-4
+  min_lr: 1.0e-6
+  warmup_steps: 500
+  weight_decay: 0.01
+  encoder_lr_multiplier: 0.1
+  early_stopping:
+    patience: 5
+    monitor: val_loss
+
+loss:
+  bce_weight: 0.5
+  dice_weight: 0.5
+
+augmentation:
+  random_flip: true
+  random_rotate90: true
+  colour_jitter: true
+  cutmix: true
+
+checkpoint:
+  path: /tmp/firescar_checkpoints/
+  save_every_epoch: true
+  resume: true
+
+distributed:
+  enabled: false
+  backend: nccl
+  num_gpus: 1
