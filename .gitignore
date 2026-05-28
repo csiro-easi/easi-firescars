@@ -1,5 +1,6 @@
 data/
 output/
+docs/
 easi-notebooks-ddp/
 __pycache__/
 *.pyc
