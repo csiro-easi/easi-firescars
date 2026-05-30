@@ -29,12 +29,13 @@ flowchart TD
 **Download command:**
 ```bash
 source ~/venvs/burn-scar/bin/activate
-huggingface-cli download ibm-esa-geospatial/ImpactMesh-Fire \
+hf download ibm-esa-geospatial/ImpactMesh-Fire \
   --repo-type dataset \
-  --include "train/S2L2A.tar" "train/S1RTC.tar" "train/MASK.tar" \
-            "val/S2L2A.tar" "val/S1RTC.tar" "val/MASK.tar" \
-            "test/S2L2A.tar" "test/S1RTC.tar" "test/MASK.tar" \
-            "split/*" \
+  --include "train/*.tar" \
+  --include "val/*.tar" \
+  --include "test/*.tar" \
+  --include "split/*" \
+  --exclude "*DEM*" \
   --local-dir data/ImpactMesh-Fire
 ```
 
@@ -207,14 +208,11 @@ kiro-foundation-model/
 │   ├── model.py               # GraniteUKIBurnScar model definition
 │   ├── train.py               # Training loop, evaluation, checkpointing
 │   └── visualisation.py       # Prediction overlays, training curves
-├── tests/
-│   ├── conftest.py
-│   ├── test_data.py           # Normalisation correctness, band ordering
-│   ├── test_model.py          # Forward pass shape, backbone output handling
-│   └── test_train.py          # Loss computation, metric calculation
-├── docs/
-│   └── venv-setup.md
-└── easi-notebooks-ddp/        # Reference code (cloned PR #32)
+└── tests/
+    ├── conftest.py
+    ├── test_data.py           # Normalisation correctness, band ordering
+    ├── test_model.py          # Forward pass shape, backbone output handling
+    └── test_train.py          # Loss computation, metric calculation
 ```
 
 **Module responsibilities:**
@@ -239,20 +237,20 @@ kiro-foundation-model/
 | Cell | Type | Milestone | Purpose |
 |------|------|-----------|---------|
 | 1 | Markdown | — | Science plan summary, milestone overview |
-| 2 | Code | — | Configuration: paths, hyperparams, feature flags |
-| 3 | Code | — | Verify venv, GPU availability, imports |
-| 4 | Markdown | M1 | Context: dataset structure |
-| 5 | Code | M1 | Download + extract (if not already present) |
-| 6 | Code | M1 | Verify sample counts, display random sample |
-| 7 | Markdown | M2 | Context: identifying AU events |
-| 8 | Code | M2 | Filter split files for EMSR408, report counts |
+| 2 | Code | — | Configuration: paths, hyperparams, feature flags, verify environment |
+| 3 | Markdown | — | Quick-start tip about MAX_TRAIN_SAMPLES |
+| 4 | Markdown | M1 | Context: dataset verification |
+| 5 | Code | M1/M2 | Collect Australian samples, create 70/15/15 splits |
+| 6 | Code | M1 | Visual check: display random sample |
+| 7 | Markdown | M2 | Context: Australian events in test set |
+| 8 | Code | M2 | Report AU sample counts, validate sufficiency |
 | 9 | Markdown | M3 | Context: Phase 1 training |
-| 10 | Code | M3 | Run Phase 1 training loop |
-| 11 | Code | M3 | Plot training curves, checkpoint best model |
+| 10 | Code | M3 | Run Phase 1 training loop (frozen backbone) |
+| 11 | Code | M3 | Plot Phase 1 training curves |
 | 12 | Markdown | M4 | Context: Phase 2 training |
-| 13 | Code | M4 | Run Phase 2 training loop |
-| 14 | Code | M4 | Plot training curves |
+| 13 | Code | M4 | Run Phase 2 training loop (full fine-tuning) |
+| 14 | Code | M4 | Plot Phase 2 training curves |
 | 15 | Markdown | M5 | Context: AU evaluation |
-| 16 | Code | M5 | Evaluate on full test + AU subset |
+| 16 | Code | M5 | Evaluate on Australian test set |
 | 17 | Code | M5 | 4-panel prediction visualisation for Black Summer |
 | 18 | Markdown | — | Summary: metrics table, next steps |

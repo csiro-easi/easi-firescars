@@ -35,10 +35,14 @@ A large-scale multimodal, multitemporal dataset for wildfire mapping released by
 **Data subset for this project:** Download only the three modalities required for the 8-band model — Sentinel-1 RTC, Sentinel-2 L2A, and burn scar masks. Skip the Copernicus DEM (not needed for granite-geospatial-uki which was not pre-trained with elevation data). This reduces the download from ~58 GB to ~30 GB. The dataset is organised as one tar archive per modality per split (train/val/test), so selective download is straightforward:
 
 ```
-hf download ibm-esa-geospatial/ImpactMesh-Fire --include "train/S2L2A.tar" "train/S1RTC.tar" "train/MASK.tar"
-                                                         "val/S2L2A.tar" "val/S1RTC.tar" "val/MASK.tar"
-                                                         "test/S2L2A.tar" "test/S1RTC.tar" "test/MASK.tar"
-                                                         "split/*"
+hf download ibm-esa-geospatial/ImpactMesh-Fire \
+  --repo-type dataset \
+  --include "train/*.tar" \
+  --include "val/*.tar" \
+  --include "test/*.tar" \
+  --include "split/*" \
+  --exclude "*DEM*" \
+  --local-dir data/ImpactMesh-Fire
 ```
 
 ### Sentinel-1 normalisation convention

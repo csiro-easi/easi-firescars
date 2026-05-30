@@ -24,7 +24,7 @@ Fine-tune the IBM granite-geospatial-uki foundation model (8-band: Sentinel-1 + 
 ## Installation
 
 ```bash
-# Assumes ~/venvs/burn-scar exists (see docs/venv-setup.md)
+# Assumes ~/venvs/burn-scar exists
 source ~/venvs/burn-scar/bin/activate
 bash setup.sh
 ```
